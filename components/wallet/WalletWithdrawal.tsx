@@ -1,0 +1,383 @@
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { useTransactions } from '../../context/TransactionContext';
+import { E_WALLET_OPTIONS, BANK_OPTIONS } from '../../constants';
+import { TransactionStatus } from '../../types';
+import WalletLayout from './WalletLayout';
+import { 
+  InformationCircleIcon, 
+  CheckBadgeIcon, 
+  BuildingLibraryIcon,
+  Cog6ToothIcon,
+  ExclamationTriangleIcon,
+  XMarkIcon
+} from '@heroicons/react/24/solid';
+
+const WalletWithdrawal: React.FC = () => {
+  const { user } = useAuth();
+  const { balance, withdraw, isLoadingTransactions, withdrawalHistory, accountMode, transactionError } = useTransactions();
+  const [amount, setAmount] = useState<string>('');
+  const [method, setMethod] = useState<'bank' | 'e-wallet'>('bank');
+  const [bankOrEwalletName, setBankOrEwalletName] = useState(user?.bankName || '');
+  const [accountNumber, setAccountNumber] = useState(user?.bankAccountNumber || '');
+  const [accountHolderName, setAccountHolderName] = useState(user?.bankAccountHolder || user?.fullName || '');
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [showInactiveModal, setShowInactiveModal] = useState<boolean>(false);
+
+  const isLowBalance = balance <= 0;
+
+  // Auto-fill account details from user profile when user loads or updates
+  useEffect(() => {
+    if (user) {
+      if (user.bankName) setBankOrEwalletName(user.bankName);
+      if (user.bankAccountNumber) setAccountNumber(user.bankAccountNumber);
+      if (user.bankAccountHolder || user.fullName) {
+        setAccountHolderName(user.bankAccountHolder || user.fullName);
+      }
+    }
+  }, [user]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    
+    // Check if account is inactive
+    if (user.isActive === false) {
+      setShowInactiveModal(true);
+      return;
+    }
+
+    if (accountMode === 'demo') {
+         setMessage({ type: 'error', text: 'Mode demo aktif. Harap beralih ke akun Real untuk melakukan penarikan dana.' });
+         return;
+    }
+
+    const numAmount = parseFloat(amount.replace(/\D/g, ''));
+    if (isNaN(numAmount) || numAmount <= 0) {
+        setMessage({ type: 'error', text: 'Nominal penarikan tidak valid.' });
+        return;
+    }
+
+    if (!bankOrEwalletName.trim()) {
+        setMessage({ type: 'error', text: 'Silakan pilih Bank atau E-Wallet tujuan penarikan.' });
+        return;
+    }
+
+    if (!accountNumber.trim()) {
+        setMessage({ type: 'error', text: 'Nomor rekening tujuan tidak boleh kosong.' });
+        return;
+    }
+
+    if (!accountHolderName.trim()) {
+        setMessage({ type: 'error', text: 'Nama pemilik rekening tidak boleh kosong.' });
+        return;
+    }
+
+    const fullMethodName = method === 'bank' ? `Bank (${bankOrEwalletName})` : `E-Wallet (${bankOrEwalletName})`;
+    const success = await withdraw(numAmount, fullMethodName, bankOrEwalletName, accountNumber, accountHolderName);
+
+    if (success) {
+      setMessage({ type: 'success', text: 'Permintaan penarikan dana berhasil dikirimkan.' });
+      setAmount('');
+    } else {
+      if (user.isActive === false || transactionError?.includes('Akun Belum Aktif')) {
+        setShowInactiveModal(true);
+        return;
+      }
+      setMessage({ type: 'error', text: transactionError || 'Penarikan gagal. Saldo tidak mencukupi atau terjadi kesalahan.' });
+    }
+  };
+
+  const hasRegisteredBank = Boolean(user?.bankName && user?.bankAccountNumber);
+
+  return (
+    <WalletLayout>
+       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+           {/* Left Column: Withdrawal Form */}
+           <div className="lg:col-span-1">
+               <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden p-6 sm:p-7">
+                   <div className="flex items-center justify-between mb-4">
+                     <h2 className="text-2xl font-bold text-[#1E293B]">Withdrawal</h2>
+                     <Link 
+                       to="/setting" 
+                       className="text-xs text-[#00AEEF] hover:text-[#009cd7] font-semibold flex items-center space-x-1"
+                       title="Ubah rekening default di Pengaturan"
+                     >
+                       <Cog6ToothIcon className="w-3.5 h-3.5" />
+                       <span>Edit Rekening</span>
+                     </Link>
+                   </div>
+                   
+                   {/* Registered Bank Status Badge */}
+                   {hasRegisteredBank ? (
+                     <div className="bg-[#EFF6FF] border border-[#BFDBFE] p-3.5 rounded-xl text-xs text-[#1E40AF] mb-5 flex items-start space-x-2.5">
+                        <CheckBadgeIcon className="w-4 h-4 text-[#2563EB] flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <span className="font-bold block text-[#1E3A8A]">Rekening Terdaftar Otomatis Terisi</span>
+                          <p className="text-[#3B82F6] font-sans">
+                            {user?.bankName} &bull; {user?.bankAccountNumber} a.n {user?.bankAccountHolder || user?.fullName}
+                          </p>
+                        </div>
+                     </div>
+                   ) : (
+                     <div className="bg-[#FFFBEB] border border-[#FDE68A] p-3 rounded-xl text-xs text-[#92400E] mb-5 flex items-start justify-between">
+                        <div className="flex items-start space-x-2">
+                          <BuildingLibraryIcon className="w-4 h-4 text-[#D97706] flex-shrink-0 mt-0.5" />
+                          <span>Simpan nomor rekening di <strong>Pengaturan</strong> agar otomatis muncul setiap saat.</span>
+                        </div>
+                        <Link to="/setting" className="text-[#00AEEF] hover:underline font-bold ml-2 whitespace-nowrap">
+                          Atur
+                        </Link>
+                     </div>
+                   )}
+
+                   {/* Green Status / Processing Alert Banner */}
+                   <div className="bg-[#00D09C] text-white p-4 rounded-xl text-xs sm:text-sm font-medium mb-6 shadow-sm leading-relaxed">
+                       Withdrawal IDR Balance no E42I9NR341RN has been successfully, please wait we will process your withdrawal.
+                   </div>
+
+                   {/* Inactive Account Alert Banner */}
+                   {user?.isActive === false && (
+                     <div className="bg-[#FEF2F2] border border-[#FECACA] p-4 rounded-xl text-xs text-[#991B1B] mb-5 flex items-start justify-between shadow-sm">
+                       <div className="flex items-start space-x-2.5">
+                         <ExclamationTriangleIcon className="w-5 h-5 text-[#DC2626] flex-shrink-0 mt-0.5" />
+                         <div>
+                           <span className="font-bold block text-sm text-[#7F1D1D] mb-0.5">Status Akun: Nonaktif</span>
+                           <p className="text-[#991B1B]">
+                             Akun Anda saat ini dalam status nonaktif. Penarikan dana terkunci.
+                           </p>
+                         </div>
+                       </div>
+                       <button 
+                         type="button"
+                         onClick={() => setShowInactiveModal(true)}
+                         className="bg-[#DC2626] hover:bg-[#B91C1C] text-white text-[11px] font-bold px-3 py-1.5 rounded-lg ml-3 whitespace-nowrap shadow-sm transition-all flex-shrink-0"
+                       >
+                         Info
+                       </button>
+                     </div>
+                   )}
+                   
+                   <form onSubmit={handleSubmit} className="space-y-4">
+                       
+                       {/* Available Balance Section */}
+                       <div>
+                           <label className="block text-[#64748B] text-xs sm:text-sm font-medium mb-1.5">Available Balance</label>
+                           <div className="flex">
+                               <div className="bg-white text-[#64748B] text-sm font-medium px-4 py-2.5 border border-[#CBD5E1] rounded-l-lg flex items-center justify-center">IDR</div>
+                               <div className={`flex-1 ${isLowBalance ? 'bg-[#E50914]' : 'bg-[#0ECB81]'} text-white text-sm px-4 py-2.5 rounded-r-lg font-bold font-sans tabular-nums flex items-center`}>
+                                   {isLowBalance ? 'No Balance' : balance.toLocaleString('en-US')}
+                               </div>
+                           </div>
+                       </div>
+
+                       {/* Currency (Fixed) */}
+                       <div>
+                           <label className="block text-[#64748B] text-xs sm:text-sm font-medium mb-1.5">Withdrawal Currency</label>
+                           <div className="bg-white border border-[#CBD5E1] rounded-lg px-4 py-2.5 text-[#334155] text-sm flex justify-between items-center">
+                               <span>IDR (Indonesia Rupiah)</span>
+                               <span className="text-[#94A3B8] text-xs">▼</span>
+                           </div>
+                       </div>
+
+                       {/* Withdrawal To */}
+                       <div>
+                           <div className="flex items-center justify-between mb-1.5">
+                             <label className="block text-[#64748B] text-xs sm:text-sm font-medium">Withdrawal To (Bank / E-Wallet)</label>
+                             <span className="text-[10px] text-[#00AEEF] font-bold uppercase tracking-wider">Otomatis Terisi</span>
+                           </div>
+                           <select 
+                                className="w-full bg-white border border-[#CBD5E1] rounded-lg px-4 py-2.5 text-[#334155] text-sm outline-none focus:border-[#00AEEF] cursor-pointer"
+                                value={bankOrEwalletName}
+                                onChange={(e) => setBankOrEwalletName(e.target.value)}
+                           >
+                               <option value="">Pilih Bank / E-Wallet Tujuan</option>
+                               <optgroup label="Daftar Bank">
+                                   {BANK_OPTIONS.map(b => <option key={b} value={b}>{b}</option>)}
+                               </optgroup>
+                               <optgroup label="Daftar E-Wallet">
+                                    {E_WALLET_OPTIONS.map(e => <option key={e} value={e}>{e}</option>)}
+                               </optgroup>
+                           </select>
+                           
+                           {/* Nomor Rekening */}
+                           <div className="mt-2.5">
+                             <label className="block text-[#64748B] text-[11px] font-semibold mb-1">Nomor Rekening</label>
+                             <input 
+                                  type="text"
+                                  placeholder="Nomor Rekening Tujuan"
+                                  className="w-full bg-white border border-[#CBD5E1] rounded-lg px-4 py-2.5 text-[#1E293B] text-sm outline-none focus:border-[#00AEEF] font-sans tabular-nums"
+                                  value={accountNumber}
+                                  onChange={e => setAccountNumber(e.target.value)}
+                             />
+                           </div>
+
+                           {/* Nama Pemilik Rekening */}
+                           <div className="mt-2.5">
+                             <label className="block text-[#64748B] text-[11px] font-semibold mb-1">Nama Pemilik Rekening</label>
+                             <input 
+                                  type="text"
+                                  placeholder="Nama Lengkap Pemilik Rekening"
+                                  className="w-full bg-white border border-[#CBD5E1] rounded-lg px-4 py-2.5 text-[#1E293B] text-sm outline-none focus:border-[#00AEEF]"
+                                  value={accountHolderName}
+                                  onChange={e => setAccountHolderName(e.target.value)}
+                             />
+                           </div>
+                       </div>
+
+                       {/* Amount */}
+                       <div>
+                           <label className="block text-[#64748B] text-xs sm:text-sm font-medium mb-1.5">Amount Withdrawal</label>
+                           <div className="flex">
+                               <div className="bg-white text-[#64748B] text-sm font-medium px-4 py-2.5 border border-[#CBD5E1] rounded-l-lg flex items-center justify-center">IDR</div>
+                               <input 
+                                    type="text"
+                                    placeholder="Nominal Penarikan"
+                                    className="flex-1 bg-white border border-[#CBD5E1] border-l-0 rounded-r-lg px-4 py-2.5 text-[#1E293B] text-sm outline-none focus:border-[#00AEEF] font-sans tabular-nums"
+                                    value={amount}
+                                    onChange={(e) => setAmount(e.target.value)}
+                               />
+                           </div>
+                       </div>
+
+                       <div className="pt-2">
+                           <button type="submit" disabled={isLoadingTransactions} className="w-full sm:w-auto bg-[#00AEEF] hover:bg-[#009cd7] text-white font-bold py-2.5 px-6 rounded-lg text-sm transition-all shadow-md shadow-[#00AEEF]/20 active:scale-95">
+                               {isLoadingTransactions ? 'Processing...' : 'Submit'}
+                           </button>
+                       </div>
+
+                       {/* Notice Box */}
+                       <div className="bg-[#FFFBEB] border border-[#FDE68A] p-4 rounded-xl text-[#92400E] text-xs mt-4">
+                           <div className="flex items-start">
+                               <InformationCircleIcon className="w-4 h-4 mr-1.5 mt-0.5 flex-shrink-0 text-[#F59E0B]" />
+                               <div>
+                                   <span className="font-bold block mb-0.5">Notice:</span>
+                                   <p>Min Rp 10, Max Rp 500,000,000, Fee 0%.</p>
+                               </div>
+                           </div>
+                       </div>
+                       
+                       {message && (
+                           <div className={`p-3.5 rounded-xl text-xs font-semibold ${message.type === 'success' ? 'bg-success/20 text-success border border-success/30' : 'bg-danger/20 text-danger border border-danger/30'}`}>
+                               {message.text}
+                           </div>
+                       )}
+
+                   </form>
+               </div>
+           </div>
+
+           {/* Right Column: History Table */}
+           <div className="lg:col-span-2">
+               <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden p-6 sm:p-7 h-full flex flex-col">
+                    <div className="border-b border-[#E2E8F0] pb-4 mb-4">
+                       <h3 className="text-[#1E293B] text-xl font-bold">Withdrawal History</h3>
+                    </div>
+                    
+                    <div>
+                        <div className="flex space-x-2 mb-4">
+                            <button className="bg-[#00AEEF] hover:bg-[#009cd7] text-white text-xs px-3.5 py-1.5 rounded-lg font-semibold transition-colors">PDF</button>
+                            <button className="bg-[#00AEEF] hover:bg-[#009cd7] text-white text-xs px-3.5 py-1.5 rounded-lg font-semibold transition-colors">Print</button>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="border-y border-[#E2E8F0] text-[#64748B] text-xs bg-[#F8FAFC]">
+                                        <th className="p-3 font-semibold border-r border-[#E2E8F0]">Fee</th>
+                                        <th className="p-3 font-semibold border-r border-[#E2E8F0]">Received</th>
+                                        <th className="p-3 font-semibold border-r border-[#E2E8F0]">Berita</th>
+                                        <th className="p-3 font-semibold">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {withdrawalHistory.map(wd => (
+                                        <tr key={wd.id} className="border-b border-[#E2E8F0] text-xs hover:bg-[#F8FAFC] transition-colors">
+                                            <td className="p-3 text-[#64748B] border-r border-[#E2E8F0] font-sans tabular-nums">Rp 0</td>
+                                            <td className="p-3 text-[#1E293B] font-semibold border-r border-[#E2E8F0] font-sans tabular-nums">Rp {wd.amount.toLocaleString('en-US')}</td>
+                                            <td className="p-3 text-[#64748B] border-r border-[#E2E8F0] max-w-xs">
+                                                <div className="font-bold text-[#1E293B]">Withdrawal IDR Balance</div>
+                                                <div>To: {wd.method.includes('Bank') ? 'Bank Account' : 'E-Wallet'} (IDR)</div>
+                                                <div className="uppercase font-medium text-[#334155]">{wd.bankOrEwalletName}</div>
+                                                <div className="font-sans tabular-nums">{wd.accountNumber}</div>
+                                                <div className="uppercase">{wd.accountHolderName}</div>
+                                            </td>
+                                            <td className="p-3">
+                                                <span className={`px-2.5 py-1 rounded-md text-white text-[11px] font-bold ${wd.status === TransactionStatus.SUCCESS ? 'bg-[#0ECB81]' : wd.status === TransactionStatus.PENDING ? 'bg-[#F59E0B]' : 'bg-[#E50914]'}`}>
+                                                    {wd.status === TransactionStatus.SUCCESS ? 'Done' : wd.status}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {withdrawalHistory.length === 0 && (
+                                        <tr>
+                                            <td colSpan={4} className="p-8 text-center text-[#94A3B8] text-xs">No records found</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="flex justify-center items-center mt-6 text-xs text-[#64748B] space-x-3">
+                             <span className="cursor-pointer hover:text-[#00AEEF]">Previous</span>
+                             <span className="bg-[#00AEEF] text-white w-6 h-6 flex items-center justify-center rounded font-bold">1</span>
+                             <span className="cursor-pointer hover:text-[#00AEEF]">Next</span>
+                        </div>
+                    </div>
+               </div>
+           </div>
+       </div>
+
+       {/* Inactive Account Warning Popup Modal */}
+       {showInactiveModal && (
+         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in font-sans">
+           <div className="bg-[#1E2329] border border-red-500/40 rounded-2xl shadow-2xl max-w-md w-full p-6 text-center text-white relative animate-scale-up">
+             <button 
+               onClick={() => setShowInactiveModal(false)}
+               className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10"
+               aria-label="Tutup"
+             >
+               <XMarkIcon className="w-5 h-5" />
+             </button>
+
+             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/20 border-2 border-red-500/40 flex items-center justify-center text-red-500">
+               <ExclamationTriangleIcon className="w-8 h-8" />
+             </div>
+
+             <h3 className="text-xl font-bold text-white mb-2">Pemberitahuan Penarikan</h3>
+
+             <div className="bg-red-500/15 border border-red-500/30 rounded-xl p-4 my-4 text-center">
+               <p className="text-base text-red-400 font-bold leading-relaxed">
+                 Akun Belum Aktif silahkan Hubungin Admin Untuk mengaktifkan Akun
+               </p>
+             </div>
+
+             <p className="text-xs text-gray-400 mb-6 leading-relaxed">
+               Status akun Anda saat ini sedang dinonaktifkan oleh Administrator. Penarikan saldo tidak dapat diproses sampai akun diaktifkan kembali.
+             </p>
+
+             <div className="flex flex-col sm:flex-row gap-3 justify-center">
+               <a 
+                 href="https://wa.me/6281234567890" 
+                 target="_blank" 
+                 rel="noreferrer"
+                 className="inline-flex items-center justify-center px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-sm transition-all shadow-md shadow-emerald-900/30"
+               >
+                 Hubungi Admin
+               </a>
+               <button 
+                 onClick={() => setShowInactiveModal(false)}
+                 className="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 font-semibold rounded-lg text-sm transition-all"
+               >
+                 Tutup
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+    </WalletLayout>
+  );
+};
+
+export default WalletWithdrawal;
