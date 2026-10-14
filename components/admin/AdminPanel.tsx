@@ -77,11 +77,8 @@ const AdminPanel: React.FC = () => {
   const [createError, setCreateError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
 
-  // Supabase Configuration & Health State
-  const initialSupabaseConfig = getSupabaseConfig();
-  const [supabaseUrlInput, setSupabaseUrlInput] = useState(initialSupabaseConfig.url);
-  const [supabaseKeyInput, setSupabaseKeyInput] = useState(initialSupabaseConfig.anonKey);
-  const [isCustomSupabase, setIsCustomSupabase] = useState(initialSupabaseConfig.isCustom);
+  // Supabase Configuration from Vercel & Health State
+  const supabaseConfig = getSupabaseConfig();
   const [supabaseTestLoading, setSupabaseTestLoading] = useState(false);
   const [supabaseTestStatus, setSupabaseTestStatus] = useState<{ success: boolean; message: string; details?: any } | null>(null);
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
@@ -93,31 +90,6 @@ const AdminPanel: React.FC = () => {
     const res = await testSupabaseConnection();
     setSupabaseTestStatus(res);
     setSupabaseTestLoading(false);
-  };
-
-  const handleSaveSupabaseConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = updateSupabaseConfig(supabaseUrlInput, supabaseKeyInput);
-    if (res.success) {
-      setIsCustomSupabase(true);
-      setUserActionMessage({ text: 'Kredensial Supabase berhasil disimpan! Silakan klik "Test Koneksi".', type: 'success' });
-      setTimeout(() => setUserActionMessage(null), 4000);
-      handleTestSupabase();
-    } else {
-      setUserActionMessage({ text: res.error || 'Gagal menyimpan kredensial.', type: 'error' });
-      setTimeout(() => setUserActionMessage(null), 4000);
-    }
-  };
-
-  const handleResetSupabaseConfig = () => {
-    resetSupabaseConfig();
-    const cfg = getSupabaseConfig();
-    setSupabaseUrlInput(cfg.url);
-    setSupabaseKeyInput(cfg.anonKey);
-    setIsCustomSupabase(false);
-    setSupabaseTestStatus(null);
-    setUserActionMessage({ text: 'Kredensial Supabase dikembalikan ke default.', type: 'success' });
-    setTimeout(() => setUserActionMessage(null), 3000);
   };
 
   const handleSyncUsers = async () => {
@@ -773,63 +745,47 @@ const AdminPanel: React.FC = () => {
               )}
             </div>
 
-            {/* 1. Supabase Connection Settings Form */}
+            {/* 1. Supabase Environment Variables Status (Otomatis dari Vercel) */}
             <div className="bg-darkblue/80 border border-gray-700/80 rounded-xl p-5 sm:p-6">
-              <h4 className="text-base font-bold text-white mb-2 flex items-center gap-2">
-                <LinkIcon className="w-5 h-5 text-primary" />
-                1. Pengaturan Kredensial Supabase Project Anda
-              </h4>
-              <p className="text-xs text-gray-400 mb-4">
-                Dapatkan Project URL & Anon Key di <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="text-primary underline font-semibold">Supabase Dashboard &gt; Project Settings &gt; API</a>.
-              </p>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                <div>
+                  <h4 className="text-base font-bold text-white flex items-center gap-2">
+                    <ServerIcon className="w-5 h-5 text-primary" />
+                    1. Konfigurasi Database Vercel (Otomatis)
+                  </h4>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Aplikasi membaca kredensial database langsung dari variabel lingkungan Vercel (<code className="text-primary font-mono">VITE_SUPABASE_URL</code> & <code className="text-primary font-mono">VITE_SUPABASE_ANON_KEY</code>) tanpa perlu memasukkan URL secara manual.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
+                    supabaseConfig.isCustom 
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                  }`}>
+                    {supabaseConfig.isCustom ? 'Variabel Vercel Terhubung' : 'Placeholder Default'}
+                  </span>
+                </div>
+              </div>
 
-              <form onSubmit={handleSaveSupabaseConfig} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
-                      Supabase Project URL
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full bg-slate-900 border border-gray-700 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-primary font-mono"
-                      placeholder="https://xyzabcdefghijklmn.supabase.co"
-                      value={supabaseUrlInput}
-                      onChange={(e) => setSupabaseUrlInput(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
-                      Supabase Anon (Public) Key
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full bg-slate-900 border border-gray-700 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-primary font-mono truncate"
-                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                      value={supabaseKeyInput}
-                      onChange={(e) => setSupabaseKeyInput(e.target.value)}
-                      required
-                    />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900/60 p-4 rounded-xl border border-gray-800">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+                    Active Supabase Project URL (Vercel)
+                  </label>
+                  <div className="text-xs sm:text-sm font-mono text-emerald-300 truncate bg-slate-950 p-2.5 rounded-lg border border-gray-800">
+                    {supabaseConfig.url}
                   </div>
                 </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <div className="text-xs text-gray-400 flex items-center gap-1.5">
-                    <span className={`w-2 h-2 rounded-full ${isCustomSupabase ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-                    <span>Status: <strong>{isCustomSupabase ? 'Kredensial Kustom Aktif' : 'Kredensial Default'}</strong></span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isCustomSupabase && (
-                      <Button type="button" variant="ghost" size="sm" onClick={handleResetSupabaseConfig}>
-                        Reset ke Default
-                      </Button>
-                    )}
-                    <Button type="submit" variant="primary" size="sm">
-                      Simpan Kredensial & Hubungkan
-                    </Button>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+                    Supabase Anon Key (Vercel)
+                  </label>
+                  <div className="text-xs sm:text-sm font-mono text-gray-300 truncate bg-slate-950 p-2.5 rounded-lg border border-gray-800">
+                    {supabaseConfig.anonKey ? '••••••••••••••••••••••••••••••••••••••••' : 'Belum Dikonfigurasi'}
                   </div>
                 </div>
-              </form>
+              </div>
             </div>
 
             {/* 2. Synchronize Data to Supabase Table */}
@@ -976,33 +932,38 @@ CREATE TABLE IF NOT EXISTS public.company_bank_info (
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
--- 5. FUNCTION TRIGGER OTOMATIS HANDLE_NEW_USER
+-- 5. FUNCTION TRIGGER OTOMATIS HANDLE_NEW_USER (ANTI-CRASH)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
-    INSERT INTO public.profiles (
-        id, email, full_name, username, phone_number, balance, is_verified, is_active, is_admin
-    ) VALUES (
-        NEW.id,
-        NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
-        COALESCE(NEW.raw_user_meta_data->>'phone_number', ''),
-        8000000.00, true, true,
-        CASE WHEN NEW.email ILIKE '%admin%' THEN true ELSE false END
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        email = EXCLUDED.email,
-        full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
-        phone_number = COALESCE(EXCLUDED.phone_number, public.profiles.phone_number),
-        updated_at = NOW();
-
-    INSERT INTO public.notifications (user_id, message, date, read)
-    VALUES (NEW.id, 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif dan terverifikasi.', NOW(), false);
+    BEGIN
+        DELETE FROM public.profiles WHERE email = NEW.email AND id <> NEW.id;
+        INSERT INTO public.profiles (
+            id, email, full_name, username, phone_number, balance, is_verified, is_active, is_admin
+        ) VALUES (
+            NEW.id,
+            NEW.email,
+            COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+            COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
+            COALESCE(NEW.raw_user_meta_data->>'phone_number', ''),
+            8000000.00, true, true,
+            CASE WHEN NEW.email ILIKE '%admin%' THEN true ELSE false END
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+            updated_at = NOW();
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
