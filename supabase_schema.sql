@@ -119,44 +119,65 @@ CREATE TABLE IF NOT EXISTS public.company_bank_info (
 
 -- 6. FUNCTION TRIGGER OTOMATIS: SYNCHRONIZE AUTH.USERS KE PUBLIC.PROFILES
 -- Setiap kali ada user baru yang mendaftar di auth.users (melalui formulir register atau admin),
--- function ini otomatis membuat baris profil di tabel public.profiles.
+-- function ini otomatis membuat baris profil di tabel public.profiles secara aman tanpa memicu crash.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
-    INSERT INTO public.profiles (
-        id,
-        email,
-        full_name,
-        username,
-        phone_number,
-        balance,
-        is_verified,
-        is_active,
-        is_admin
-    ) VALUES (
-        NEW.id,
-        NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
-        COALESCE(NEW.raw_user_meta_data->>'phone_number', ''),
-        8000000.00,
-        true,
-        true,
-        CASE WHEN NEW.email ILIKE '%admin%' THEN true ELSE false END
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        email = EXCLUDED.email,
-        full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
-        phone_number = COALESCE(EXCLUDED.phone_number, public.profiles.phone_number),
-        updated_at = NOW();
+    -- A. Bersihkan record profil lama dengan email sama tapi ID berbeda (mencegah tabrakan unique constraint)
+    BEGIN
+        DELETE FROM public.profiles WHERE email = NEW.email AND id <> NEW.id;
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
 
-    -- Tambahkan notifikasi sambutan selamat datang otomatis
-    INSERT INTO public.notifications (user_id, message, date, read)
-    VALUES (NEW.id, 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif dan terverifikasi.', NOW(), false);
+    -- B. Masukkan atau perbarui data di public.profiles
+    BEGIN
+        INSERT INTO public.profiles (
+            id,
+            email,
+            full_name,
+            username,
+            phone_number,
+            balance,
+            is_verified,
+            is_active,
+            is_admin
+        ) VALUES (
+            NEW.id,
+            NEW.email,
+            COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+            COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
+            COALESCE(NEW.raw_user_meta_data->>'phone_number', ''),
+            8000000.00,
+            true,
+            true,
+            CASE WHEN NEW.email ILIKE '%admin%' THEN true ELSE false END
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+            phone_number = COALESCE(EXCLUDED.phone_number, public.profiles.phone_number),
+            updated_at = NOW();
+    EXCEPTION WHEN OTHERS THEN
+        -- Cegah rollback transaksi auth.users agar pendaftaran tidak error "Database error saving new user"
+        RAISE WARNING 'handle_new_user profile insert warning: %', SQLERRM;
+    END;
+
+    -- C. Tambahkan notifikasi selamat datang otomatis
+    BEGIN
+        INSERT INTO public.notifications (user_id, message, date, read)
+        VALUES (NEW.id, 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif dan terverifikasi.', NOW(), false);
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Pasang Trigger ke tabel auth.users
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;

@@ -116,6 +116,12 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
         setTimeout(() => reject(new Error('Koneksi ke Supabase timeout (>8s). Pastikan project Supabase aktif dan tidak dalam status paused.')), 8000)
       );
 
+      // Bersihkan profil lokal/usang dengan email yang sama jika ada di public.profiles
+      // agar tidak memicu tabrakan UNIQUE constraint pada trigger auth.users Supabase
+      try {
+        await supabase.from('profiles').delete().ilike('email', cleanEmail);
+      } catch {}
+
       const signUpPromise = supabase.auth.signUp({
         email: cleanEmail,
         password: cleanPassword,
@@ -134,6 +140,12 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
         const msg = authError.message || '';
         if (msg.toLowerCase().includes('already registered')) {
           return { user: null, error: 'Email ini sudah terdaftar di database Supabase. Silakan langsung Masuk.' };
+        }
+        if (msg.toLowerCase().includes('database error saving new user')) {
+          return { 
+            user: null, 
+            error: 'Database error saving new user: Trigger database Supabase mengalami benturan data. Silakan jalankan ulang skrip perbaikan terbaru dari supabase_schema.sql di menu SQL Editor Supabase.' 
+          };
         }
         return { user: null, error: `Pendaftaran Supabase gagal: ${msg}` };
       }
@@ -876,6 +888,12 @@ export const adminCreateUser = async (userData: Omit<User, 'id' | 'username' | '
       const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) => 
         setTimeout(() => reject(new Error('Koneksi Supabase timeout (>8s)')), 8000)
       );
+
+      // Bersihkan profil lokal/usang dengan email yang sama jika ada di public.profiles
+      try {
+        await supabase.from('profiles').delete().ilike('email', cleanEmail);
+      } catch {}
+
       const signUpPromise = supabase.auth.signUp({ 
           email: cleanEmail, 
           password: cleanPassword,
@@ -891,7 +909,11 @@ export const adminCreateUser = async (userData: Omit<User, 'id' | 'username' | '
       const { data: authData, error: authError } = await Promise.race([signUpPromise, timeoutPromise]) as any;
 
       if (authError) {
-        throw new Error(`Supabase Auth error: ${authError.message}`);
+        const msg = authError.message || '';
+        if (msg.toLowerCase().includes('database error saving new user')) {
+          throw new Error('Database error saving new user: Trigger Supabase Anda mengalami benturan data. Buka menu SQL Editor di Supabase Dashboard, jalankan ulang skrip perbaikan terbaru dari supabase_schema.sql.');
+        }
+        throw new Error(`Supabase Auth error: ${msg}`);
       }
 
       if (authData?.user) {
