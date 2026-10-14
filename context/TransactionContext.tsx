@@ -11,6 +11,7 @@ import {
 } from '../types';
 import * as transactionService from '../services/transactionService';
 import * as authService from '../services/authService';
+import { supabase } from '../services/supabaseClient';
 import { useAuth } from './AuthContext';
 
 interface TransactionContextType {
@@ -38,13 +39,14 @@ interface TransactionContextType {
   getAllUsers: () => Promise<User[]>;
   updateUserVerification: (userId: string, isVerified: boolean) => void;
   updateUserActiveStatus: (userId: string, isActive: boolean) => Promise<void>;
+  refreshLiveBalance: () => Promise<void>;
 }
 
 const TransactionContext = createContext<TransactionContextType | undefined>(undefined);
 
 export const TransactionProvider: React.FC<React.PropsWithChildren<{}>> = ({ children }) => {
   const { user, refreshUser } = useAuth();
-  const [balance, setBalance] = useState<number>(0);
+  const [balance, setBalance] = useState<number>(() => user?.balance ?? 0);
   const [accountMode, setAccountMode] = useState<'real' | 'demo'>('real');
   const [depositHistory, setDepositHistory] = useState<DepositTransaction[]>([]);
   const [withdrawalHistory, setWithdrawalHistory] = useState<WithdrawalTransaction[]>([]);
@@ -53,10 +55,112 @@ export const TransactionProvider: React.FC<React.PropsWithChildren<{}>> = ({ chi
   const [isLoadingTransactions, setIsLoadingTransactions] = useState<boolean>(false);
   const [transactionError, setTransactionError] = useState<string | null>(null);
 
+  // Fungsi sinkronisasi saldo langsung dari tabel profiles Supabase
+  const refreshLiveBalance = useCallback(async () => {
+    if (!user) return;
+    try {
+      const liveBal = await authService.getLiveProfileBalance(user.id, user.email);
+      if (liveBal !== null) {
+        setBalance(liveBal);
+        if (user.balance !== liveBal) {
+          user.balance = liveBal;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [user]);
+
+  // Synchronize live balance directly from Supabase 'profiles' table in real-time
+  useEffect(() => {
+    if (!user) {
+      setBalance(0);
+      return;
+    }
+
+    let isMounted = true;
+
+    const syncLiveBalanceFromSupabase = async () => {
+      try {
+        const liveBal = await authService.getLiveProfileBalance(user.id, user.email);
+        if (liveBal !== null && isMounted) {
+          setBalance(liveBal);
+          if (user.balance !== liveBal) {
+            user.balance = liveBal;
+          }
+        }
+      } catch (err) {
+        // network warning
+      }
+    };
+
+    // Immediate sync on user mount or change
+    syncLiveBalanceFromSupabase();
+
+    // Realtime channel subscription (postgres_changes on 'profiles')
+    const channelId = `realtime-profile-${user.id || user.email}-${Math.random().toString(36).substring(2, 9)}`;
+    const channel = supabase
+      .channel(channelId)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // listen to all events (UPDATE, INSERT)
+          schema: 'public',
+          table: 'profiles',
+        },
+        (payload: any) => {
+          if (!isMounted) return;
+          const newRow = payload.new;
+          if (newRow) {
+            const matchesId = user.id && newRow.id === user.id;
+            const matchesEmail = user.email && newRow.email && 
+              newRow.email.toLowerCase() === user.email.toLowerCase();
+
+            if (matchesId || matchesEmail) {
+              if (newRow.balance !== undefined && newRow.balance !== null) {
+                const newLiveBal = Number(newRow.balance);
+                setBalance(newLiveBal);
+                user.balance = newLiveBal;
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    // Periodic Polling fallback (every 3 seconds)
+    // Ensures balance is synced even if Supabase Realtime WebSocket is paused or not enabled in dashboard
+    const pollTimer = setInterval(syncLiveBalanceFromSupabase, 3000);
+
+    // Window focus and visibility listener (instantly updates when admin switches tabs from Supabase dashboard back to Dupoin)
+    const onWindowFocus = () => syncLiveBalanceFromSupabase();
+    window.addEventListener('focus', onWindowFocus);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncLiveBalanceFromSupabase();
+      }
+    };
+    window.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollTimer);
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('visibilitychange', onVisibilityChange);
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   const fetchTransactions = useCallback(async () => {
     if (user) {
       setIsLoadingTransactions(true);
-      setBalance(user.balance);
+      // Baca saldo Supabase langsung
+      const liveBal = await authService.getLiveProfileBalance(user.id, user.email);
+      if (liveBal !== null) {
+        setBalance(liveBal);
+      } else {
+        setBalance(user.balance);
+      }
       const deposits = await transactionService.getDepositHistory(user.id);
       const withdrawals = await transactionService.getWithdrawalHistory(user.id);
       setDepositHistory(deposits);
@@ -87,7 +191,7 @@ export const TransactionProvider: React.FC<React.PropsWithChildren<{}>> = ({ chi
     setAccountMode(prevMode => (prevMode === 'real' ? 'demo' : 'real'));
   };
 
-  const displayedBalance = accountMode === 'real' ? balance : 0;
+  const displayedBalance = accountMode === 'real' ? balance : 100000000;
 
   const addNotification = async (message: string) => {
     if (user) {
@@ -281,6 +385,7 @@ export const TransactionProvider: React.FC<React.PropsWithChildren<{}>> = ({ chi
     adminUpdateUserBalance,
     adminCreateUser,
     deleteUser,
+    refreshLiveBalance,
   };
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;

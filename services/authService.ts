@@ -260,6 +260,33 @@ export const login = async (identifier: string, passwordAttempt: string): Promis
       };
     }
     const demoUser = createDemoUser(cleanIdentifier, creds.role);
+    // Cek apakah ada profil akun ini di tabel profiles Supabase untuk membaca saldo real-time
+    try {
+      const { data: dbProf } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('email', cleanIdentifier)
+        .maybeSingle();
+
+      if (dbProf) {
+        demoUser.balance = Number(dbProf.balance !== null && dbProf.balance !== undefined ? dbProf.balance : demoUser.balance);
+        if (dbProf.id) demoUser.id = dbProf.id;
+        if (dbProf.full_name) demoUser.fullName = dbProf.full_name;
+        if (dbProf.is_admin !== undefined) demoUser.isAdmin = Boolean(dbProf.is_admin);
+      } else {
+        // Jika profil belum ada di Supabase, buat barisnya agar otomatis muncul di Table Editor Supabase
+        supabase.from('profiles').upsert({
+          email: cleanIdentifier,
+          full_name: demoUser.fullName,
+          username: demoUser.username,
+          phone_number: demoUser.phoneNumber,
+          balance: demoUser.balance,
+          is_verified: demoUser.isVerified,
+          is_active: demoUser.isActive,
+          is_admin: demoUser.isAdmin,
+        }).then(() => {}).catch(() => {});
+      }
+    } catch {}
     localStorage.setItem(DEMO_USER_KEY, JSON.stringify(demoUser));
     return { user: demoUser, error: null };
   }
@@ -283,6 +310,23 @@ export const login = async (identifier: string, passwordAttempt: string): Promis
       isActive: !isDeactivated && matchedCustomUser.isActive !== false,
       isVerified: !isDeactivated && matchedCustomUser.isVerified !== false,
     };
+
+    // Sinkronkan saldo langsung dari tabel profiles Supabase jika ada
+    try {
+      const isUuid = resolvedUser.id && resolvedUser.id.length === 36 && resolvedUser.id.includes('-');
+      let query = supabase.from('profiles').select('*');
+      if (isUuid) {
+        query = query.or(`id.eq.${resolvedUser.id},email.ilike.${cleanIdentifier}`);
+      } else {
+        query = query.ilike('email', cleanIdentifier);
+      }
+      const { data: dbProf } = await query.maybeSingle();
+      if (dbProf && dbProf.balance !== null && dbProf.balance !== undefined) {
+        resolvedUser.balance = Number(dbProf.balance);
+        if (dbProf.id) resolvedUser.id = dbProf.id;
+      }
+    } catch {}
+
     localStorage.setItem(DEMO_USER_KEY, JSON.stringify(resolvedUser));
     return { user: resolvedUser, error: null };
   }
@@ -383,6 +427,34 @@ export const logout = async (): Promise<void> => {
   }
 };
 
+export const getLiveProfileBalance = async (userId?: string, email?: string): Promise<number | null> => {
+  try {
+    const cleanEmail = email ? email.trim().toLowerCase() : '';
+    const isUuid = userId && userId.length === 36 && userId.includes('-');
+
+    let query = supabase.from('profiles').select('balance');
+    if (isUuid && cleanEmail) {
+      query = query.or(`id.eq.${userId},email.ilike.${cleanEmail}`);
+    } else if (isUuid) {
+      query = query.eq('id', userId);
+    } else if (cleanEmail) {
+      query = query.ilike('email', cleanEmail);
+    } else if (userId) {
+      query = query.eq('id', userId);
+    } else {
+      return null;
+    }
+
+    const { data, error } = await query.maybeSingle();
+    if (!error && data && data.balance !== null && data.balance !== undefined) {
+      return Number(data.balance);
+    }
+  } catch (err) {
+    // network or schema warning
+  }
+  return null;
+};
+
 export const getCurrentUser = async (): Promise<User | null> => {
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
@@ -391,18 +463,27 @@ export const getCurrentUser = async (): Promise<User | null> => {
         .from('profiles')
         .select('*')
         .eq('id', session.user.id)
-        .single();
+        .maybeSingle();
+
+      if (!profileData && session.user.email) {
+        const { data: byEmail } = await supabase
+          .from('profiles')
+          .select('*')
+          .ilike('email', session.user.email)
+          .maybeSingle();
+        profileData = byEmail;
+      }
 
       if (profileData) {
         if (profileData.balance === null || profileData.balance === undefined) {
-          await supabase.from('profiles').update({ balance: 8000000 }).eq('id', session.user.id);
+          await supabase.from('profiles').update({ balance: 8000000 }).eq('id', profileData.id || session.user.id);
           profileData.balance = 8000000;
         }
 
         const { data: notifs } = await supabase
           .from('notifications')
           .select('*')
-          .eq('user_id', session.user.id)
+          .eq('user_id', profileData.id || session.user.id)
           .order('date', { ascending: false });
 
         const user = mapProfileToUser(profileData, session.user);
@@ -411,10 +492,62 @@ export const getCurrentUser = async (): Promise<User | null> => {
       }
     }
 
-    // Check localStorage fallback
+    // Check localStorage session fallback
     const localUserJson = localStorage.getItem(DEMO_USER_KEY);
     if (localUserJson) {
-      return JSON.parse(localUserJson) as User;
+      const parsed = JSON.parse(localUserJson) as User;
+
+      // SINKRONKAN SALDO LANGSUNG DARI TABEL PROFILES SUPABASE
+      try {
+        const isUuid = parsed.id && parsed.id.length === 36 && parsed.id.includes('-');
+        let query = supabase.from('profiles').select('*');
+        if (isUuid && parsed.email) {
+          query = query.or(`id.eq.${parsed.id},email.ilike.${parsed.email}`);
+        } else if (isUuid) {
+          query = query.eq('id', parsed.id);
+        } else if (parsed.email) {
+          query = query.ilike('email', parsed.email.trim());
+        }
+
+        const { data: dbProfile } = await query.maybeSingle();
+
+        if (dbProfile) {
+          const syncedUser = mapProfileToUser(dbProfile, null);
+          syncedUser.password = parsed.password;
+          syncedUser.isAdmin = dbProfile.is_admin ?? parsed.isAdmin;
+          syncedUser.balance = Number(dbProfile.balance !== null && dbProfile.balance !== undefined ? dbProfile.balance : parsed.balance);
+          
+          // Perbarui juga data notifikasi dari Supabase
+          const { data: notifs } = await supabase
+            .from('notifications')
+            .select('*')
+            .or(`user_id.eq.${dbProfile.id}${isUuid ? `,user_id.eq.${parsed.id}` : ''}`)
+            .order('date', { ascending: false });
+          if (notifs) {
+            syncedUser.notifications = notifs;
+          }
+
+          localStorage.setItem(DEMO_USER_KEY, JSON.stringify(syncedUser));
+          return syncedUser;
+        } else if (parsed.email) {
+          // Jika profil belum ada di tabel profiles Supabase, daftarkan otomatis agar bisa diedit di Supabase Table Editor
+          supabase.from('profiles').upsert({
+            id: isUuid ? parsed.id : undefined,
+            email: parsed.email.trim().toLowerCase(),
+            full_name: parsed.fullName,
+            username: parsed.username || parsed.email.split('@')[0],
+            phone_number: parsed.phoneNumber || '',
+            balance: parsed.balance !== undefined ? parsed.balance : 8000000,
+            is_verified: parsed.isVerified !== false,
+            is_active: parsed.isActive !== false,
+            is_admin: parsed.isAdmin || false,
+          }).then(() => {}).catch(() => {});
+        }
+      } catch (dbErr) {
+        // Fallback jika Supabase offline
+      }
+
+      return parsed;
     }
 
     return null;
@@ -436,7 +569,64 @@ export const addUserNotification = async (userId: string, message: string): Prom
 };
 
 export const updateUserBalance = async (userId: string, newBalance: number): Promise<void> => {
-  await supabase.from('profiles').update({ balance: newBalance }).eq('id', userId);
+  const numericBalance = Number(newBalance);
+
+  // 1. Coba update via ID di tabel profiles Supabase
+  let updatedInDb = false;
+  try {
+    const isUuid = userId && userId.length === 36 && userId.includes('-');
+    if (isUuid) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ balance: numericBalance })
+        .eq('id', userId)
+        .select('id');
+      if (!error && data && data.length > 0) {
+        updatedInDb = true;
+      }
+    }
+  } catch {}
+
+  // 2. Jika belum berhasil atau bukan UUID, update berdasarkan email
+  if (!updatedInDb) {
+    try {
+      const allUsers = getCustomUsers();
+      const localUserJson = localStorage.getItem(DEMO_USER_KEY);
+      let matchedEmail = allUsers.find(u => u.id === userId)?.email;
+      if (!matchedEmail && localUserJson) {
+        const parsed = JSON.parse(localUserJson);
+        if (parsed.id === userId) matchedEmail = parsed.email;
+      }
+      if (matchedEmail) {
+        await supabase
+          .from('profiles')
+          .update({ balance: numericBalance })
+          .ilike('email', matchedEmail.trim());
+      }
+    } catch {}
+  }
+
+  // 3. Sinkronkan dengan local session user
+  try {
+    const localUserJson = localStorage.getItem(DEMO_USER_KEY);
+    if (localUserJson) {
+      const parsed = JSON.parse(localUserJson);
+      if (parsed.id === userId || (parsed.email && parsed.email.toLowerCase() === userId.toLowerCase())) {
+        parsed.balance = numericBalance;
+        localStorage.setItem(DEMO_USER_KEY, JSON.stringify(parsed));
+      }
+    }
+  } catch {}
+
+  // 4. Sinkronkan dengan custom users
+  try {
+    const customUsers = getCustomUsers();
+    const idx = customUsers.findIndex(u => u.id === userId || u.email.toLowerCase() === userId.toLowerCase());
+    if (idx >= 0) {
+      customUsers[idx].balance = numericBalance;
+      localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(customUsers));
+    }
+  } catch {}
 };
 
 const CUSTOM_USERS_KEY = 'dupoin_custom_users';

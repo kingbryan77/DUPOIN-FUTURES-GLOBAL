@@ -250,21 +250,31 @@ export const updateDepositStatus = async (depositId: string, status: Transaction
     // LOGIKA UPDATE SALDO DAN NOTIFIKASI MEMBER
     if (t.status !== TransactionStatus.SUCCESS && status === TransactionStatus.SUCCESS) {
         // Status berubah jadi SUCCESS (Done)
-        const { data: profile } = await supabase.from('profiles').select('balance').eq('id', t.user_id).single();
+        let { data: profile } = await supabase.from('profiles').select('balance, id').eq('id', t.user_id).maybeSingle();
+        if (!profile) {
+            const { data: byEmail } = await supabase.from('profiles').select('balance, id').ilike('email', t.user_id).maybeSingle();
+            profile = byEmail;
+        }
         if (profile) {
-            await authService.updateUserBalance(t.user_id, profile.balance + t.amount);
+            const currentBal = Number(profile.balance || 0);
+            await authService.updateUserBalance(profile.id || t.user_id, currentBal + Number(t.amount));
             // Notifikasi Spesifik
-            await authService.addUserNotification(t.user_id, `Deposit Berhasil (DONE): Saldo sebesar Rp ${t.amount.toLocaleString('en-US')} telah ditambahkan ke akun Anda.`);
+            await authService.addUserNotification(profile.id || t.user_id, `Deposit Berhasil (DONE): Saldo sebesar Rp ${Number(t.amount).toLocaleString('en-US')} telah ditambahkan ke akun Anda.`);
         }
     } else if (t.status === TransactionStatus.SUCCESS && status !== TransactionStatus.SUCCESS) {
         // Status dibatalkan dari Success (Revert)
-        const { data: profile } = await supabase.from('profiles').select('balance').eq('id', t.user_id).single();
+        let { data: profile } = await supabase.from('profiles').select('balance, id').eq('id', t.user_id).maybeSingle();
+        if (!profile) {
+            const { data: byEmail } = await supabase.from('profiles').select('balance, id').ilike('email', t.user_id).maybeSingle();
+            profile = byEmail;
+        }
         if (profile) {
-            await authService.updateUserBalance(t.user_id, profile.balance - t.amount);
-            await authService.addUserNotification(t.user_id, `Koreksi Deposit: Status deposit Rp ${t.amount.toLocaleString('en-US')} diubah menjadi ${status}. Saldo disesuaikan.`);
+            const currentBal = Number(profile.balance || 0);
+            await authService.updateUserBalance(profile.id || t.user_id, Math.max(0, currentBal - Number(t.amount)));
+            await authService.addUserNotification(profile.id || t.user_id, `Koreksi Deposit: Status deposit Rp ${Number(t.amount).toLocaleString('en-US')} diubah menjadi ${status}. Saldo disesuaikan.`);
         }
     } else if (status === TransactionStatus.REJECTED) {
-         await authService.addUserNotification(t.user_id, `Deposit Ditolak: Permintaan deposit Rp ${t.amount.toLocaleString('en-US')} tidak disetujui.`);
+         await authService.addUserNotification(t.user_id, `Deposit Ditolak: Permintaan deposit Rp ${Number(t.amount).toLocaleString('en-US')} tidak disetujui.`);
     } else {
          await authService.addUserNotification(t.user_id, `Status deposit #${depositId.substring(0,8)}... diperbarui menjadi ${status}.`);
     }
@@ -294,18 +304,23 @@ export const updateWithdrawalStatus = async (withdrawalId: string, status: Trans
     // If changing from Refunded to Not Refunded (e.g. Rejected -> Pending/Success) -> DEDUCT balance again
     // If changing from Not Refunded to Refunded (e.g. Pending/Success -> Rejected) -> REFUND balance
     
-    const { data: profile } = await supabase.from('profiles').select('balance').eq('id', t.user_id).single();
+    let { data: profile } = await supabase.from('profiles').select('balance, id').eq('id', t.user_id).maybeSingle();
+    if (!profile) {
+        const { data: byEmail } = await supabase.from('profiles').select('balance, id').ilike('email', t.user_id).maybeSingle();
+        profile = byEmail;
+    }
     
     if (profile) {
-        let newBalance = profile.balance;
+        const currentBal = Number(profile.balance || 0);
+        let newBalance = currentBal;
         if (currentlyRefunded && !willBeRefunded) {
-            newBalance -= t.amount;
+            newBalance = Math.max(0, newBalance - Number(t.amount));
         } else if (!currentlyRefunded && willBeRefunded) {
-            newBalance += t.amount;
+            newBalance += Number(t.amount);
         }
 
-        if (newBalance !== profile.balance) {
-            await authService.updateUserBalance(t.user_id, newBalance);
+        if (newBalance !== currentBal) {
+            await authService.updateUserBalance(profile.id || t.user_id, newBalance);
         }
     }
 

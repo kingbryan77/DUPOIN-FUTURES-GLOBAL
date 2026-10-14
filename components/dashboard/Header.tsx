@@ -77,11 +77,12 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         <button 
             onClick={toggleAccountMode} 
             className="inline-flex items-center rounded-lg overflow-hidden shadow-sm active:scale-95 transition-all duration-150 focus:outline-none select-none h-[34px] sm:h-[36px]"
-            title="Click to toggle Real/Demo"
+            title="Klik untuk beralih mode Akun Real / Akun Demo (Tersinkronisasi otomatis dengan database Supabase)"
         >
           {/* Left container: Dark charcoal with white Rp balance */}
-          <div className="bg-[#353B48] hover:bg-[#3d4452] text-white text-xs sm:text-[14px] font-semibold px-3 sm:px-4 flex items-center h-full font-sans tabular-nums tracking-normal transition-colors">
-            {formatCurrency(balance)}
+          <div className="bg-[#353B48] hover:bg-[#3d4452] text-white text-xs sm:text-[14px] font-semibold px-3 sm:px-4 flex items-center h-full font-sans tabular-nums tracking-normal transition-colors space-x-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00D09C] animate-pulse inline-block" title="Tersinkronisasi Live dengan Tabel Supabase"></span>
+            <span>{formatCurrency(balance)}</span>
           </div>
           {/* Right container: Mint green with dark green Real text */}
           <div className="bg-[#00D09C] hover:bg-[#00be8e] text-[#0A3825] text-xs sm:text-[14px] font-semibold px-3 sm:px-3.5 flex items-center h-full min-w-[46px] justify-center font-sans transition-colors">
