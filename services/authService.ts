@@ -110,14 +110,12 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
   }
 
   // 1. Coba daftarkan langsung ke database Supabase jika sudah dikonfigurasi
-  let createdSupabaseUser: User | null = null;
-  let supabaseWarning: string | null = null;
-
   if (isSupabaseConfigured()) {
     try {
       const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) => 
-        setTimeout(() => reject(new Error('Koneksi Supabase timeout (>4s). Pastikan Project URL Supabase aktif & benar.')), 4000)
+        setTimeout(() => reject(new Error('Koneksi ke Supabase timeout (>8s). Pastikan project Supabase aktif dan tidak dalam status paused.')), 8000)
       );
+
       const signUpPromise = supabase.auth.signUp({
         email: cleanEmail,
         password: cleanPassword,
@@ -133,52 +131,80 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
       const { data: authData, error: authError } = await Promise.race([signUpPromise, timeoutPromise]) as any;
 
       if (authError) {
-        if (authError.message?.toLowerCase().includes('already registered')) {
-          return { user: null, error: 'Email ini sudah terdaftar di database Supabase.' };
+        const msg = authError.message || '';
+        if (msg.toLowerCase().includes('already registered')) {
+          return { user: null, error: 'Email ini sudah terdaftar di database Supabase. Silakan langsung Masuk.' };
         }
-        supabaseWarning = `Koneksi Supabase Auth: ${authError.message}`;
-      } else if (authData?.user) {
-        // Masukkan profil langsung ke public.profiles
-        const profileRow = {
-          id: authData.user.id,
-          email: cleanEmail,
-          full_name: cleanFullName,
-          username: cleanEmail.split('@')[0],
-          phone_number: userData.phoneNumber || '',
-          balance: 8000000,
-          is_verified: true,
-          is_active: true,
-          is_admin: false,
-        };
-
-        const { error: profileError } = await supabase.from('profiles').upsert(profileRow);
-        if (profileError) {
-          supabaseWarning = `User berhasil masuk ke Supabase Auth, namun baris public.profiles gagal: ${profileError.message}. Pastikan skrip supabase_schema.sql telah dijalankan di SQL Editor Supabase.`;
-        }
-
-        // Notifikasi selamat datang otomatis
-        await supabase.from('notifications').insert([{
-          user_id: authData.user.id,
-          message: 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif dan terverifikasi di Supabase.',
-          date: new Date().toISOString(),
-          read: false
-        }]).catch(() => {});
-
-        createdSupabaseUser = mapProfileToUser(profileRow, authData.user);
+        return { user: null, error: `Pendaftaran Supabase gagal: ${msg}` };
       }
+
+      if (!authData?.user) {
+        return { user: null, error: 'Tidak mendapatkan respon ID user dari database Supabase.' };
+      }
+
+      const userId = authData.user.id;
+
+      // Masukkan profil langsung ke public.profiles
+      const profileRow = {
+        id: userId,
+        email: cleanEmail,
+        full_name: cleanFullName,
+        username: cleanEmail.split('@')[0],
+        phone_number: userData.phoneNumber || '',
+        balance: 8000000,
+        is_verified: true,
+        is_active: true,
+        is_admin: false,
+      };
+
+      let profileSaved = false;
+      try {
+        const { error: upsertErr } = await supabase.from('profiles').upsert(profileRow);
+        if (!upsertErr) {
+          profileSaved = true;
+        } else {
+          console.warn('Upsert profiles failed, trying insert:', upsertErr);
+          const { error: insertErr } = await supabase.from('profiles').insert([profileRow]);
+          if (!insertErr) profileSaved = true;
+        }
+      } catch (profErr) {
+        console.warn('Profile save exception:', profErr);
+      }
+
+      // Notifikasi selamat datang otomatis
+      await supabase.from('notifications').insert([{
+        user_id: userId,
+        message: 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif dan terverifikasi di Supabase.',
+        date: new Date().toISOString(),
+        read: false
+      }]).catch(() => {});
+
+      const createdSupabaseUser = mapProfileToUser(profileRow, authData.user);
+      createdSupabaseUser.password = cleanPassword;
+      saveCustomUser(createdSupabaseUser);
+
+      let warningMsg: string | null = null;
+      if (!profileSaved) {
+        warningMsg = 'Akun terdaftar di Supabase Auth, namun tabel public.profiles belum merespon. Pastikan skrip supabase_schema.sql sudah dijalankan di menu SQL Editor Supabase.';
+      } else if (!authData.session) {
+        warningMsg = 'Akun berhasil disimpan ke Supabase! Jika opsi "Confirm email" diaktifkan di Supabase, silakan konfirmasi email Anda atau nonaktifkan Confirm Email di Dashboard Supabase.';
+      }
+
+      return { 
+        user: createdSupabaseUser, 
+        error: null, 
+        warning: warningMsg 
+      };
     } catch (e: any) {
-      supabaseWarning = `Supabase tidak dapat dijangkau (${e?.message || e}). Periksa koneksi project Supabase Anda.`;
+      console.error('Supabase registration error:', e);
+      return { 
+        user: null, 
+        error: `Gagal mendaftar ke database Supabase: ${e?.message || e}. Pastikan URL dan Anon Key Supabase di Vercel sudah benar.` 
+      };
     }
-  } else {
-    supabaseWarning = 'Aplikasi belum terhubung ke database Supabase Anda. Klik tombol "Hubungkan Supabase" di bagian atas untuk menghubungkan Project URL & Anon Key Anda.';
   }
 
-  if (createdSupabaseUser) {
-    saveCustomUser({ ...createdSupabaseUser, password: cleanPassword });
-    return { user: createdSupabaseUser, error: null, warning: supabaseWarning };
-  }
-
-  // 2. Fallback pembuatan akun baru yang selalu aman beserta password
+  // 2. Fallback HANYA jika Supabase belum pernah dikonfigurasi sama sekali (mode demo offline)
   const newId = 'user-' + Date.now();
   const newUser: User = {
     id: newId,
@@ -192,7 +218,7 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
     balance: 8000000,
     password: cleanPassword,
     notifications: [
-      { id: '1', message: 'Selamat datang di Dupoin Pro Trader! Akun Anda telah aktif.', date: new Date().toISOString(), read: false }
+      { id: '1', message: 'Selamat datang di Dupoin Pro Trader! (Mode Demo Offline)', date: new Date().toISOString(), read: false }
     ],
     bankName: '',
     bankAccountNumber: '',
@@ -203,7 +229,7 @@ export const register = async (userData: Omit<User, 'id' | 'username' | 'isAdmin
   return { 
     user: newUser, 
     error: null, 
-    warning: null 
+    warning: 'Aplikasi berjalan dalam mode lokal karena kredensial Supabase belum diatur.' 
   };
 };
 
@@ -845,46 +871,66 @@ export const adminCreateUser = async (userData: Omit<User, 'id' | 'username' | '
   }
 
   // Coba buat di Supabase Auth jika online
-  try {
-    const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) => 
-      setTimeout(() => reject(new Error('timeout')), 2500)
-    );
-    const signUpPromise = supabase.auth.signUp({ 
-        email: cleanEmail, 
-        password: cleanPassword,
-        options: { data: { full_name: cleanFullName } } 
-    });
-    
-    const { data: authData, error: authError } = await Promise.race([signUpPromise, timeoutPromise]) as any;
+  if (isSupabaseConfigured()) {
+    try {
+      const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) => 
+        setTimeout(() => reject(new Error('Koneksi Supabase timeout (>8s)')), 8000)
+      );
+      const signUpPromise = supabase.auth.signUp({ 
+          email: cleanEmail, 
+          password: cleanPassword,
+          options: { 
+            data: { 
+              full_name: cleanFullName,
+              username: cleanEmail.split('@')[0],
+              phone_number: userData.phoneNumber || ''
+            } 
+          } 
+      });
+      
+      const { data: authData, error: authError } = await Promise.race([signUpPromise, timeoutPromise]) as any;
 
-    if (!authError && authData?.user) {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .upsert({ 
-            id: authData.user.id,
-            email: cleanEmail,
-            full_name: cleanFullName,
-            phone_number: userData.phoneNumber || '',
-            balance: userData.balance !== undefined ? userData.balance : 8000000,
-            is_verified: userData.isVerified !== undefined ? userData.isVerified : initialActive,
-            is_active: initialActive,
-            is_admin: userData.isAdmin || false, 
-        })
-        .select()
-        .single();
-
-      if (!initialActive) {
-        setDeactivatedUserId(authData.user.id, true);
+      if (authError) {
+        throw new Error(`Supabase Auth error: ${authError.message}`);
       }
 
-      await addUserNotification(authData.user.id, `Akun Anda telah dibuat oleh Administrator.`);
+      if (authData?.user) {
+        const profileRow = { 
+          id: authData.user.id,
+          email: cleanEmail,
+          full_name: cleanFullName,
+          username: cleanEmail.split('@')[0],
+          phone_number: userData.phoneNumber || '',
+          balance: userData.balance !== undefined ? userData.balance : 8000000,
+          is_verified: userData.isVerified !== undefined ? userData.isVerified : initialActive,
+          is_active: initialActive,
+          is_admin: userData.isAdmin || false, 
+        };
 
-      const createdUser = mapProfileToUser(profileData || {}, authData.user);
-      saveCustomUser({ ...createdUser, password: cleanPassword });
-      return createdUser;
+        const { data: profileData, error: profErr } = await supabase
+          .from('profiles')
+          .upsert(profileRow)
+          .select()
+          .single();
+
+        if (profErr) {
+          await supabase.from('profiles').insert([profileRow]).catch(() => {});
+        }
+
+        if (!initialActive) {
+          setDeactivatedUserId(authData.user.id, true);
+        }
+
+        await addUserNotification(authData.user.id, `Akun Anda telah dibuat oleh Administrator.`);
+
+        const createdUser = mapProfileToUser(profileData || profileRow, authData.user);
+        saveCustomUser({ ...createdUser, password: cleanPassword });
+        return createdUser;
+      }
+    } catch (err: any) { 
+      console.warn("Supabase Auth error saat admin membuat user:", err?.message || err);
+      throw err;
     }
-  } catch (err: any) { 
-    console.warn("Supabase Auth tidak dapat diakses, membuat user secara lokal aman:", err?.message || err);
   }
 
   // Fallback pembuatan user lokal yang selalu berhasil & tersimpan dengan sandi

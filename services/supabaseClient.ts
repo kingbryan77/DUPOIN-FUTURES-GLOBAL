@@ -8,16 +8,28 @@ const DEFAULT_SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string) || 'h
 const DEFAULT_SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFmeHV5Z2RydWxxaGdkY3ZxbnR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2MjgzNzMsImV4cCI6MjA4MjIwNDM3M30.KPddJd_xsE7zDLpz-X3Bd25fE8tWnnGEYeceFfhpt8Q';
 
 export const getSupabaseConfig = (): { url: string; anonKey: string; isCustom: boolean } => {
+  const isEnvConfigured = Boolean(
+    DEFAULT_SUPABASE_URL &&
+    DEFAULT_SUPABASE_URL.startsWith('https://') &&
+    !DEFAULT_SUPABASE_URL.includes('jlpthxzpiqaexjpdzcsl')
+  );
+
   try {
     const savedUrl = localStorage.getItem(STORAGE_URL_KEY);
     const savedKey = localStorage.getItem(STORAGE_ANON_KEY);
-    if (savedUrl && savedKey) {
+    
+    // Jika di localStorage masih tersimpan dummy URL bawaan, bersihkan agar variabel Vercel yang dipakai
+    if (savedUrl && savedUrl.includes('jlpthxzpiqaexjpdzcsl')) {
+      localStorage.removeItem(STORAGE_URL_KEY);
+      localStorage.removeItem(STORAGE_ANON_KEY);
+    } else if (savedUrl && savedKey) {
       return { url: savedUrl.trim(), anonKey: savedKey.trim(), isCustom: true };
     }
   } catch (e) {
     // localStorage might not be available in some environments
   }
-  return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, isCustom: false };
+
+  return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, isCustom: isEnvConfigured };
 };
 
 let currentConfig = getSupabaseConfig();
@@ -66,13 +78,20 @@ export const resetSupabaseConfig = (): void => {
     localStorage.removeItem(STORAGE_URL_KEY);
     localStorage.removeItem(STORAGE_ANON_KEY);
   } catch (e) {}
-  currentConfig = { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, isCustom: false };
-  activeClient = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY);
+  currentConfig = getSupabaseConfig();
+  activeClient = createClient(currentConfig.url, currentConfig.anonKey);
 };
 
 export const isSupabaseConfigured = (): boolean => {
   const config = getSupabaseConfig();
-  return config.isCustom && config.url.startsWith('https://') && !config.url.includes('jlpthxzpiqaexjpdzcsl');
+  const url = (config.url || '').trim();
+  const key = (config.anonKey || '').trim();
+  return (
+    url.startsWith('https://') &&
+    !url.includes('jlpthxzpiqaexjpdzcsl') &&
+    key.length > 20 &&
+    !key.includes('afxuygdrulqhgdcvqntv')
+  );
 };
 
 /**
@@ -82,10 +101,10 @@ export const testSupabaseConnection = async (): Promise<{ success: boolean; mess
   const config = getSupabaseConfig();
 
   // If still using non-existent default URL, return clear immediate diagnostic
-  if (!config.isCustom || config.url.includes('jlpthxzpiqaexjpdzcsl')) {
+  if (!isSupabaseConfigured()) {
     return {
       success: false,
-      message: 'Koneksi belum terhubung: Aplikasi masih menggunakan URL contoh bawaan yang tidak aktif. Masukkan Project URL (https://xxxx.supabase.co) dan Anon Key dari project Supabase Anda sendiri.',
+      message: 'Koneksi belum terhubung: Aplikasi masih menggunakan URL contoh bawaan yang tidak aktif. Masukkan Project URL (https://xxxx.supabase.co) dan Anon Key dari project Supabase Anda sendiri di Vercel atau Pengaturan Admin.',
       details: { isDefaultUrl: true }
     };
   }

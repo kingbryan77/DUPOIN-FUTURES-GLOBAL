@@ -17,7 +17,7 @@ const RegisterForm: React.FC = () => {
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const { register, isLoading, error } = useAuth();
+  const { register, isLoading, error, registrationNotice } = useAuth();
   const navigate = useNavigate();
 
   const validate = () => {
@@ -57,8 +57,8 @@ const RegisterForm: React.FC = () => {
         <div className="bg-success/20 text-success p-8 rounded-3xl mb-8 border border-success/30">
            <CheckCircleIcon className="w-20 h-20 mx-auto mb-4" />
            <h2 className="text-3xl font-bold mb-3">Pendaftaran Berhasil!</h2>
-           <p className="text-sm leading-relaxed text-gray-300">
-             Akun Anda telah aktif dan terverifikasi. Silakan masuk untuk mulai bertransaksi.
+           <p className="text-sm leading-relaxed text-gray-200">
+             {registrationNotice || 'Akun Anda telah berhasil terdaftar dan tersimpan di database Supabase. Silakan masuk untuk mulai bertransaksi.'}
            </p>
         </div>
         <Link to="/">
@@ -77,6 +77,12 @@ const RegisterForm: React.FC = () => {
 
       <h2 className="text-xl font-semibold mb-2">Buat Akun Baru</h2>
       <p className="text-gray-400 mb-6 text-sm">Mulai trading dengan broker terpercaya</p>
+
+      {registrationNotice && (
+        <div className="bg-primary/20 text-primary p-3 rounded-lg mb-4 text-xs font-medium border border-primary/30">
+          {registrationNotice}
+        </div>
+      )}
 
       {(errors.api || error) && (
         <div className="bg-danger/20 text-danger p-3 rounded-lg mb-4 text-xs font-medium border border-danger/30">

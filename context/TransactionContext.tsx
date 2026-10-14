@@ -191,7 +191,7 @@ export const TransactionProvider: React.FC<React.PropsWithChildren<{}>> = ({ chi
     setAccountMode(prevMode => (prevMode === 'real' ? 'demo' : 'real'));
   };
 
-  const displayedBalance = accountMode === 'real' ? balance : 100000000;
+  const displayedBalance = accountMode === 'real' ? balance : 0;
 
   const addNotification = async (message: string) => {
     if (user) {
